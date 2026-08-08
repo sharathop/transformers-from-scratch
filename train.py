@@ -3,6 +3,7 @@ import argparse
 import copy
 import csv
 import json
+import pickle
 import time
 from pathlib import Path
 
@@ -66,6 +67,9 @@ def main():
     split_args = {"max_length": args.max_length}
     if args.dataset == "ag_news": split_args.update(train_samples=args.train_samples, test_samples=args.test_samples, seed=args.seed)
     train_set, test_set, vocab, num_classes, label_names = make_splits(args.dataset, **split_args)
+    # Inference uses this local artifact and never needs to load the training dataset.
+    with open(output / "vocab.pkl", "wb") as file:
+        pickle.dump({"itos": vocab.itos, "stoi": vocab.stoi}, file)
     print(f"Dataset: {args.dataset}; train={len(train_set):,}, test={len(test_set):,}; labels={label_names}")
     train_loader = DataLoader(train_set, args.batch_size, shuffle=True); test_loader = DataLoader(test_set, args.batch_size)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
