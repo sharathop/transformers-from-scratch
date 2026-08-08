@@ -1,5 +1,6 @@
 """Gradio interface for testing the trained full and LoRA AG News classifiers."""
 from functools import lru_cache
+import os
 from pathlib import Path
 
 import gradio as gr
@@ -23,7 +24,7 @@ def vocabulary_from_tokens(tokens):
 @lru_cache(maxsize=2)
 def load_model(method: str):
     """Load a saved checkpoint once and keep it in memory for later UI requests."""
-    path = Path("outputs") / f"{method}_model.pt"
+    path = Path(os.getenv("MODEL_DIR", "outputs")) / f"{method}_model.pt"
     if not path.exists():
         raise FileNotFoundError(f"{path} was not found. Train with: python train.py --mode {method} --epochs 5")
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
@@ -87,6 +88,8 @@ with gr.Blocks(title="AG News Transformer Classifier") as demo:
     )
     button.click(classify, inputs=[text, method], outputs=[prediction, probabilities, attention_plot])
 
-
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860
+    )

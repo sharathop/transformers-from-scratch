@@ -16,13 +16,12 @@ env/
 htmlcov/
 
 # Training artifacts and model checkpoints
-outputs/
-outputs_*/
 *.pt
 *.pth
 *.ckpt
+outputs/
+outputs_*/
 
 # Dataset and tool caches
 .cache/
 data/
-
