@@ -1,5 +1,12 @@
 # 🚀 Transformer Encoder from Scratch with LoRA
 
+![Python](https://img.shields.io/badge/Python-3.12-blue)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-red)
+![LoRA](https://img.shields.io/badge/PEFT-LoRA-orange)
+![Gradio](https://img.shields.io/badge/Gradio-Web_App-yellow)
+![AWS](https://img.shields.io/badge/AWS-EC2-FF9900)
+![License](https://img.shields.io/badge/License-MIT-green)
+
 A complete **Transformer Encoder** implementation built **from scratch in PyTorch** without using `torch.nn.Transformer` or `torch.nn.MultiheadAttention`.
 
 This project was built to understand how modern Transformer models work internally by implementing every major component manually, including **Multi-Head Self-Attention**, **Positional Embeddings**, **Feed Forward Networks**, **Residual Connections**, **Layer Normalization**, and **Low-Rank Adaptation (LoRA)**.
@@ -41,6 +48,14 @@ Unlike typical NLP projects that rely on Hugging Face Transformer implementation
 - ✅ Gradio Web Interface
 
 ---
+
+## 🌐 Live Demo
+
+The project is deployed on an AWS EC2 instance using Gradio.
+
+**Demo:** http://15.252.122.97:7860
+
+> **Note:** The demo is hosted on a personal EC2 instance and may be temporarily unavailable if the instance is stopped.
 
 # 🏗️ Architecture
 
@@ -418,6 +433,26 @@ python app.py
 A local Gradio application will open for interactive news classification.
 
 ---
+
+# ☁️ AWS EC2 Deployment
+
+The interactive Gradio application is deployed on an AWS EC2 Ubuntu instance.
+
+Deployment steps:
+
+- Launch an Ubuntu EC2 instance
+- Configure Security Groups to allow TCP port **7860**
+- Clone the repository
+- Create a Python virtual environment
+- Install dependencies from `requirements.txt`
+- Upload the trained checkpoints (`full_model.pt`, `lora_model.pt`, and `vocab.pkl`)
+- Start the application using Gradio
+- Keep the server running with `tmux`
+
+Launch:
+
+```bash
+python app.py
 
 # 📁 Project Structure
 
