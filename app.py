@@ -1,17 +1,24 @@
-"""Gradio interface for testing the trained full and LoRA AG News classifiers."""
-from functools import lru_cache
+
+"""Streamlit interface for the trained full and LoRA AG News classifiers."""
+
 import os
 import pickle
 from pathlib import Path
 
-import gradio as gr
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import pandas as pd
+import streamlit as st
 import torch
 
 from transformer_encoder.lora import apply_lora
 from transformer_encoder.model import TransformerClassifier
+
+
+st.set_page_config(
+    page_title="AG News Transformer Classifier",
+    page_icon="📰",
+    layout="wide",
+)
 
 
 def load_vocabulary(path: Path) -> dict[str, int]:
@@ -21,85 +28,237 @@ def load_vocabulary(path: Path) -> dict[str, int]:
 
 
 def encode(text: str, stoi: dict[str, int], max_length: int) -> list[int]:
-    unk_id, pad_id = stoi["<unk>"], stoi["<pad>"]
-    token_ids = [stoi.get(token, unk_id) for token in text.lower().split()]
+    unk_id = stoi["<unk>"]
+    pad_id = stoi["<pad>"]
+
+    token_ids = [
+        stoi.get(token, unk_id)
+        for token in text.lower().split()
+    ]
+
     return (token_ids[:max_length] + [pad_id] * max_length)[:max_length]
 
 
-@lru_cache(maxsize=2)
+@st.cache_resource
 def load_model(method: str):
-    """Load a saved checkpoint once and keep it in memory for later UI requests."""
+    """Load the selected trained model once and cache it."""
+
     model_dir = Path(os.getenv("MODEL_DIR", "outputs"))
-    path = model_dir / f"{method}_model.pt"
-    if not path.exists():
-        raise FileNotFoundError(f"{path} was not found. Train with: python train.py --mode {method} --epochs 5")
+    model_path = model_dir / f"{method}_model.pt"
     vocab_path = model_dir / "vocab.pkl"
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"{model_path} was not found. "
+            f"Train the model with: python train.py --mode {method} --epochs 5"
+        )
+
     if not vocab_path.exists():
-        raise FileNotFoundError(f"{vocab_path} was not found. Run train.py once to create vocab.pkl.")
+        raise FileNotFoundError(
+            f"{vocab_path} was not found. "
+            "Run train.py once to create vocab.pkl."
+        )
+
     stoi = load_vocabulary(vocab_path)
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+
+    checkpoint = torch.load(
+        model_path,
+        map_location="cpu",
+        weights_only=False,
+    )
+
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        max_length, labels = checkpoint["max_length"], checkpoint["labels"]
-        config, state_dict = checkpoint["model_config"], checkpoint["state_dict"]
+        max_length = checkpoint["max_length"]
+        labels = checkpoint["labels"]
+        config = checkpoint["model_config"]
+        state_dict = checkpoint["state_dict"]
         num_classes = checkpoint["num_classes"]
     else:
-        # Compatibility with older raw state-dict checkpoints; no dataset access is required.
-        max_length, num_classes = 64, 4
+        # Compatibility with older raw state-dict checkpoints.
+        max_length = 64
+        num_classes = 4
         labels = ["World", "Sports", "Business", "Sci/Tech"]
-        config, state_dict = {"d_model": 128, "num_heads": 4, "num_layers": 2, "ff_dim": 256}, checkpoint
-    model = TransformerClassifier(len(stoi), max_length=max_length, num_classes=num_classes, **config)
+        config = {
+            "d_model": 128,
+            "num_heads": 4,
+            "num_layers": 2,
+            "ff_dim": 256,
+        }
+        state_dict = checkpoint
+
+    model = TransformerClassifier(
+        len(stoi),
+        max_length=max_length,
+        num_classes=num_classes,
+        **config,
+    )
+
     if method == "lora":
         apply_lora(model)
+
     model.load_state_dict(state_dict)
     model.eval()
+
     return model, stoi, max_length, labels
 
 
 def classify(text: str, method: str):
     if not text or not text.strip():
-        raise gr.Error("Enter a news headline or article first.")
+        raise ValueError("Enter a news headline or article first.")
+
     model, stoi, max_length, labels = load_model(method)
-    ids = torch.tensor(encode(text, stoi, max_length)).unsqueeze(0)
+
+    ids = torch.tensor(
+        encode(text, stoi, max_length),
+        dtype=torch.long,
+    ).unsqueeze(0)
+
     with torch.no_grad():
         probabilities = torch.softmax(model(ids), dim=1)[0].tolist()
+
     scores = dict(zip(labels, probabilities))
     best = max(scores, key=scores.get)
+
+    # Extract attention from the final encoder layer, head 0.
     tokens = text.lower().split()[:max_length]
-    attention = model.attention_maps()[-1][0, 0, :len(tokens), :len(tokens)].cpu()
-    figure, axis = plt.subplots(figsize=(max(6, len(tokens) * 0.55), max(4, len(tokens) * 0.45)))
+    attention = (
+        model.attention_maps()[-1][0, 0, :len(tokens), :len(tokens)]
+        .detach()
+        .cpu()
+    )
+
+    figure, axis = plt.subplots(
+        figsize=(
+            max(6, len(tokens) * 0.55),
+            max(4, len(tokens) * 0.45),
+        )
+    )
+
     image = axis.imshow(attention, cmap="magma", vmin=0, vmax=1)
-    axis.set_xticks(range(len(tokens)), tokens, rotation=45, ha="right")
-    axis.set_yticks(range(len(tokens)), tokens)
+
+    axis.set_xticks(range(len(tokens)))
+    axis.set_xticklabels(tokens, rotation=45, ha="right")
+    axis.set_yticks(range(len(tokens)))
+    axis.set_yticklabels(tokens)
     axis.set_xlabel("Key tokens")
     axis.set_ylabel("Query tokens")
-    axis.set_title(f"{method.title()} attention - final encoder layer, head 0")
+    axis.set_title(
+        f"{method.title()} attention - final encoder layer, head 0"
+    )
+
     figure.colorbar(image, ax=axis, label="Attention probability")
     figure.tight_layout()
-    return f"{best} ({scores[best] * 100:.2f}% confidence)", scores, figure
+
+    return best, scores, figure
 
 
-with gr.Blocks(title="AG News Transformer Classifier") as demo:
-    gr.Markdown("# AG News Transformer Classifier\nClassify a news headline or article with the scratch Transformer. Choose **Full fine-tuning** for the higher-accuracy model or **LoRA** for the parameter-efficient model.")
-    with gr.Row():
-        with gr.Column():
-            text = gr.Textbox(label="News text", lines=6, placeholder="Paste a headline or article here...")
-            method = gr.Radio([("Full fine-tuning", "full"), ("LoRA", "lora")], value="full", label="Model")
-            button = gr.Button("Classify", variant="primary")
-        with gr.Column():
-            prediction = gr.Textbox(label="Prediction")
-            probabilities = gr.Label(label="Class probabilities", num_top_classes=4)
-    attention_plot = gr.Plot(label="Attention heatmap")
-    gr.Examples(
-        examples=[
-            ["The national team won the championship match", "full"],
-            ["Central bank raises interest rates to control inflation", "full"],
-            ["Scientists announce a new telescope mission to study distant galaxies", "full"],
-        ], inputs=[text, method], label="Examples",
+st.title("📰 AG News Transformer Classifier")
+
+st.markdown(
+    """
+    Classify a news headline or article using a Transformer Encoder
+    built from scratch.
+
+    - **Full fine-tuning:** uses the fully fine-tuned model.
+    - **LoRA:** uses the parameter-efficient fine-tuned model.
+    """
+)
+
+with st.sidebar:
+    st.header("Model settings")
+
+    method = st.radio(
+        "Choose a model",
+        options=["full", "lora"],
+        format_func=lambda value: {
+            "full": "Full fine-tuning",
+            "lora": "LoRA",
+        }[value],
     )
-    button.click(classify, inputs=[text, method], outputs=[prediction, probabilities, attention_plot])
 
-if __name__ == "__main__":
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=7860
+    st.caption(
+        "The selected model must have its trained checkpoint "
+        "available in the outputs directory."
     )
+
+st.subheader("Enter news text")
+
+examples = {
+    "Sports headline": (
+        "The national team won the championship match"
+    ),
+    "Business headline": (
+        "Central bank raises interest rates to control inflation"
+    ),
+    "Science and technology headline": (
+        "Scientists announce a new telescope mission "
+        "to study distant galaxies"
+    ),
+}
+
+example_choice = st.selectbox(
+    "Try an example",
+    ["Choose an example..."] + list(examples.keys()),
+)
+
+default_text = (
+    examples[example_choice]
+    if example_choice in examples
+    else ""
+)
+
+news_text = st.text_area(
+    "News headline or article",
+    value=default_text,
+    height=150,
+    placeholder="Paste a headline or article here...",
+)
+
+if st.button("Classify news", type="primary"):
+    if not news_text.strip():
+        st.warning("Enter a news headline or article first.")
+    else:
+        try:
+            with st.spinner("Loading model and classifying news..."):
+                prediction, scores, figure = classify(
+                    news_text,
+                    method,
+                )
+
+            st.success(f"Predicted category: {prediction}")
+
+            st.subheader("Class probabilities")
+
+            probability_data = pd.DataFrame(
+                {
+                    "Category": list(scores.keys()),
+                    "Probability": list(scores.values()),
+                }
+            ).set_index("Category")
+
+            st.bar_chart(probability_data)
+
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Category": category,
+                            "Probability": f"{probability:.2%}",
+                        }
+                        for category, probability in scores.items()
+                    ]
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            st.subheader("Attention heatmap")
+            st.pyplot(figure)
+            plt.close(figure)
+
+        except FileNotFoundError as error:
+            st.error(str(error))
+        except Exception as error:
+            st.error(
+                f"Prediction failed: {error}"
+            )
